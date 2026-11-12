@@ -115,8 +115,9 @@ footer{color:var(--muted);font-size:11px;padding:6px 20px 20px}
 #cmpout td:first-child,#cmpout th:first-child{text-align:left}
 #cmpout th{font-size:12px;text-transform:none;color:var(--text)}
 td.best{background:#12402a!important;color:var(--green);font-weight:700}
+input{background:var(--card);color:#fff;border:1px solid var(--line);border-radius:8px;padding:7px 12px;font-size:14px;min-width:220px}
 @media(max-width:700px){header{padding:8px 12px}header img{height:46px}header b{font-size:22px}
-.ctl{padding:8px 12px;flex-wrap:wrap}main{padding:6px 10px}h2{font-size:19px}select{font-size:16px;max-width:100%}
+.ctl{padding:8px 12px;flex-wrap:wrap}main{padding:6px 10px}h2{font-size:19px}select,input{font-size:16px;max-width:100%}
 td.pl{min-width:175px}th,td{padding:5px 7px}.bar{width:150px}}
 """
 JS = """
@@ -136,13 +137,18 @@ document.addEventListener('click',function(ev){
 var CM='teams';
 function esc(t){return String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
 function cmode(m){CM=m;fill()}
-function fill(){var L=CM==='teams'?DATA.teams:DATA.players;
- ['ca','cb','cc'].forEach(function(id,k){var s=document.getElementById(id);s.innerHTML='';
-  if(k===2)s.add(new Option('— none —',''));
-  L.forEach(function(x,i){s.add(new Option(x.name+(CM==='players'&&x.sub?' ('+x.sub+')':''),String(i)))});
-  s.value=k===2?'':String(Math.min(k,L.length-1))});cmp()}
-function cmp(){var L=CM==='teams'?DATA.teams:DATA.players,M=CM==='teams'?DATA.tm:DATA.pm;
- var sel=['ca','cb','cc'].map(function(id){var v=document.getElementById(id).value;return v===''?null:L[+v]}).filter(Boolean);
+var LAB={};
+function nz(t){return String(t).normalize('NFD').replace(/[\\u0300-\\u036f]/g,'').toLowerCase().trim()}
+function lab(x){return x.name+(CM==='players'&&x.sub?' ('+x.sub+')':'')}
+function fill(){var L=CM==='teams'?DATA.teams:DATA.players;LAB={};
+ var dl=document.getElementById('dl');dl.innerHTML='';
+ L.forEach(function(x){var t=lab(x);LAB[t]=x;var o=document.createElement('option');o.value=t;dl.appendChild(o)});
+ ['ca','cb','cc'].forEach(function(id,k){document.getElementById(id).value=(k<2&&L[k])?lab(L[k]):''});cmp()}
+function pick(v){v=nz(v);if(!v)return null;
+ for(var t in LAB){if(nz(t)===v)return LAB[t]}
+ for(var t in LAB){if(nz(t).indexOf(v)>=0)return LAB[t]}return null}
+function cmp(){var M=CM==='teams'?DATA.tm:DATA.pm;
+ var sel=['ca','cb','cc'].map(function(id){return pick(document.getElementById(id).value)}).filter(Boolean);
  var h='<table><thead><tr><th>Metric</th>';
  sel.forEach(function(x){h+='<th>'+(x.img?'<img class="ph" src="https://a.espncdn.com/i/headshots/nba/players/full/'+x.img+'.png" onerror="this.remove()"> ':'')+esc(x.name)+'</th>'});
  h+='</tr></thead><tbody>';
@@ -555,8 +561,10 @@ def compare_html(views):
                 players=[d for _, d in sorted(plist, key=lambda x: -x[0])], tm=TEAM_METRICS, pm=PLAYER_METRICS)
     js = json.dumps(data, ensure_ascii=False).replace("</", "<\\/")
     return ("<div class='cmpbar'><select onchange='cmode(this.value)'><option value='teams'>Compare teams</option>"
-            "<option value='players'>Compare players</option></select><select id='ca' onchange='cmp()'></select>"
-            "<select id='cb' onchange='cmp()'></select><select id='cc' onchange='cmp()'></select></div>"
+            "<option value='players'>Compare players</option></select><input id='ca' list='dl' placeholder='Search by name...' oninput='cmp()' onfocus='this.select()' autocomplete='off'>"
+            "<input id='cb' list='dl' placeholder='Search by name...' oninput='cmp()' onfocus='this.select()' autocomplete='off'>"
+            "<input id='cc' list='dl' placeholder='Add a third (optional)...' oninput='cmp()' onfocus='this.select()' autocomplete='off'>"
+            "<datalist id='dl'></datalist></div>"
             "<div class='w' id='cmpout'></div><script>var DATA=" + js + ";</script>")
 
 
