@@ -34,15 +34,15 @@ PRO = {1: "ATL", 2: "BOS", 3: "NOP", 4: "CHI", 5: "CLE", 6: "DAL", 7: "DEN", 8: 
        29: "MEM", 30: "CHA"}
 SLOTS = ["PG", "SG", "SF", "PF", "C", "G", "F", "UTIL", "UTIL", "UTIL"]
 ELIG = {"G": {"PG", "SG"}, "F": {"SF", "PF"}, "UTIL": None}
-CARD_KEYS = ("rank", "avg", "tot", "ptot", "pavg", "inj")
-COLS = [("POS RANK", "gE"), ("AVG FPTS", "gE"), ("2027 FPTS", "gE"), ("2027 PROJ", "gE"), ("FP L14", "gF"),
+CARD_KEYS = ("rank", "avg", "tot", "ptot", "pavg", "inj", "l7", "l15", "gp", "pg")
+COLS = [("POS RANK", "gE"), ("AVG FPTS", "gE"), ("2027 FPTS", "gE"), ("2027 PROJ", "gE"), ("FP L15", "gF"),
         ("FP L7", "gF")] + [(c, "gS") for c in ("GP", "MIN", "PTS", "REB", "AST", "STL", "BLK", "TO", "3PM", "FG%")]
 LEGEND = [
     ("POS RANK", "Rank among players at his position (ESPN, this season)"),
     ("AVG FPTS", "Average fantasy points per game (your league's scoring)"),
     ("2027 FPTS", "Total fantasy points this season so far"),
     ("2027 PROJ", "ESPN projected fantasy points for the season (and per game)"),
-    ("FP L14 / L7", "Average fantasy points over the last 14 / 7 games"),
+    ("FP L15 / L7", "Average fantasy points over the last 15 / 7 games"),
     ("GP", "Games played"), ("MIN", "Minutes per game"), ("PTS / REB / AST", "Points, rebounds, assists per game"),
     ("STL / BLK", "Steals, blocks per game"), ("TO", "Turnovers per game"), ("3PM", "Three-pointers made per game"),
     ("FG%", "Field goal percentage"), ("Games", "Games in the next 7 days"),
@@ -206,18 +206,41 @@ def short_status(s):
     return "OUT" if ("OUT" in s or "RESERVE" in s) else "DTD" if "DAY" in s else ""
 
 
+STAT_IDS = {"MIN": "40", "PTS": "0", "REB": "6", "AST": "3", "STL": "2", "BLK": "1", "TO": "11", "3PM": "17"}
+
+
 def parse_card(e):
-    """ESPN player entry (roster entry, player card or free-agent row) -> rank / fantasy points."""
+    """ESPN player entry (roster entry, player card or free-agent row) -> rank, fantasy points, per-game stats."""
     p, Y = e.get("player") or {}, ESPN_YEAR
     sts = p.get("stats") or []
-    by_id = {s.get("id"): s for s in sts}
-    by_src = {(s.get("statSourceId"), s.get("statSplitTypeId")): s for s in sts if s.get("seasonId") == Y}
-    act = by_id.get("00%d" % Y) or by_src.get((0, 0)) or {}
-    prj = by_id.get("10%d" % Y) or by_src.get((1, 0)) or {}
+    by_id = {x.get("id"): x for x in sts}
+    by_src = {(x.get("statSourceId"), x.get("statSplitTypeId")): x for x in sts if x.get("seasonId") == Y}
+    get = lambda i, k: by_id.get("%s%d" % (i, Y)) or by_src.get(k) or {}
+    act, prj, l7, l15 = get("00", (0, 0)), get("10", (1, 0)), get("01", (0, 1)), get("02", (0, 2))
+    tot, avg = act.get("stats") or {}, act.get("averageStats") or {}
+    gp = tot.get("42")
+
+    def per(i):
+        v = avg.get(i)
+        if v is None and tot.get(i) is not None and gp:
+            v = tot[i] / gp
+        return v
+    pg = {k: per(i) for k, i in STAT_IDS.items()}
+    pg["FG"] = 100.0 * tot["13"] / tot["14"] if tot.get("13") is not None and tot.get("14") else None
     rts = e.get("ratings") or p.get("ratings") or {}     # ratings sit next to "player", not inside it
     rt = rts.get("0") or next(iter(rts.values()), {})
     return dict(rank=rt.get("positionalRanking"), avg=act.get("appliedAverage"), tot=act.get("appliedTotal"),
-                ptot=prj.get("appliedTotal"), pavg=prj.get("appliedAverage"), inj=p.get("injuryStatus"))
+                ptot=prj.get("appliedTotal"), pavg=prj.get("appliedAverage"), inj=p.get("injuryStatus"),
+                l7=l7.get("appliedAverage"), l15=l15.get("appliedAverage"), gp=gp, pg=pg)
+
+
+def merge_cards(a, b):
+    out = {}
+    for key in CARD_KEYS:
+        x, y = (a or {}).get(key), (b or {}).get(key)
+        out[key] = ({k: (x.get(k) if x.get(k) is not None else (y or {}).get(k)) for k in set(x) | set(y or {})}
+                    if isinstance(x, dict) else (x if x is not None else y))
+    return out
 
 
 def parse_entry(p, slot, card):
@@ -244,7 +267,7 @@ def fetch_league():
 
 def card_filter(sp, **extra):
     Y = ESPN_YEAR
-    f = {"filterStatsForTopScoringPeriodIds": {"value": 5, "additionalValue": ["00%d" % Y, "10%d" % Y]},
+    f = {"filterStatsForTopScoringPeriodIds": {"value": 5, "additionalValue": ["00%d" % Y, "10%d" % Y, "01%d" % Y, "02%d" % Y]},
          "filterRanksForScoringPeriodIds": {"value": [sp] if sp else []},
          "filterRanksForRankTypes": {"value": ["STANDARD"]}}
     f.update(extra)
@@ -268,6 +291,10 @@ def fetch_cards(ids, sp):
         if not any(c["avg"] is not None for c in out.values()):
             debug_dump("espn_debug.json", data.get("players", [])[:2])
             print("No fantasy points found - saved espn_debug.json (send it to Claude).")
+        if not any((c.get("pg") or {}).get("PTS") is not None for c in out.values()) and data.get("players"):
+            dbg = [x for x in ((data["players"][0].get("player") or {}).get("stats") or []) if x.get("seasonId") == ESPN_YEAR][:3]
+            debug_dump("espn_stats_debug.json", dbg)
+            print("No per-game stats found. Send this to Claude:", json.dumps(dbg)[:2500])
     except Exception as ex:
         print("ESPN player cards failed:", ex)
     return out
@@ -301,7 +328,7 @@ def fetch_injuries():
 
 def fetch_stats(k):
     df = lds.LeagueDashPlayerStats(season=SEASON, per_mode_detailed="Totals",
-                                   last_n_games=k, timeout=60).get_data_frames()[0]
+                                   last_n_games=k, timeout=25).get_data_frames()[0]
     return {norm(r["PLAYER_NAME"]): r for r in df.to_dict("records")}
 
 
@@ -333,6 +360,24 @@ def fetch_schedule():
         except Exception as e:
             print("Schedule failed:", name, e)
     return {}
+
+
+def fetch_schedule_espn(days):
+    fix = {"NY": "NYK", "GS": "GSW", "SA": "SAS", "NO": "NOP", "UTAH": "UTA", "WSH": "WAS"}
+    sched = {}
+    for d in days:
+        try:
+            data = get_json("https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard?dates=" + d.replace("-", ""))
+            for ev in data.get("events", []):
+                comp = ev["competitions"][0]["competitors"]
+                h = next(c for c in comp if c["homeAway"] == "home")["team"]["abbreviation"]
+                a = next(c for c in comp if c["homeAway"] == "away")["team"]["abbreviation"]
+                h, a = fix.get(h, h), fix.get(a, a)
+                sched.setdefault(d, {})[h] = "vs " + a
+                sched.setdefault(d, {})[a] = "@" + h
+        except Exception as ex:
+            print("ESPN schedule failed for", d, ex)
+    return sched
 
 
 def best_lineup(players, day):
@@ -464,7 +509,7 @@ TEAM_METRICS = [["wk", "Projected FP, next 7 days", 1, 0], ["avg", "Top-10 AVG F
                 ["TO", "TO (top 10, lower is better)", -1, 1], ["3PM", "3PM (top 10)", 1, 1]] + \
                [["pos" + s, s + " eligible players", 0, 0] for s in POSES] + [["inj", "Injured players", -1, 0]]
 PLAYER_METRICS = [["rank", "POS RANK (lower is better)", -1, 0], ["avg", "AVG FPTS", 1, 1], ["tot", "2027 FPTS", 1, 0],
-                  ["ptot", "2027 PROJ", 1, 0], ["fp14", "FP L14", 1, 1], ["fp7", "FP L7", 1, 1], ["games", "Games, next 7 days", 1, 0],
+                  ["ptot", "2027 PROJ", 1, 0], ["fp14", "FP L15", 1, 1], ["fp7", "FP L7", 1, 1], ["games", "Games, next 7 days", 1, 0],
                   ["MIN", "MIN", 1, 0], ["PTS", "PTS", 1, 1], ["REB", "REB", 1, 1], ["AST", "AST", 1, 1], ["STL", "STL", 1, 1],
                   ["BLK", "BLK", 1, 1], ["TO", "TO (lower is better)", -1, 1], ["3PM", "3PM", 1, 1], ["FG", "FG%", 1, 0]]
 
@@ -532,29 +577,38 @@ def main():
         print("NBA stats failed (continuing without them):", ex)
         s_all = s14 = s7 = {}
     now = dt.datetime.now(ZoneInfo("America/New_York"))
-    CTX.update(sched=fetch_schedule(), dates=[now.date() + dt.timedelta(i) for i in range(DAYS)])
+    CTX.update(dates=[now.date() + dt.timedelta(i) for i in range(DAYS)])
     CTX["days"] = [d.isoformat() for d in CTX["dates"]]
+    CTX["sched"] = fetch_schedule() or fetch_schedule_espn(CTX["days"])
 
     def make_players(entries):
         out = []
         for en in entries:
             k = norm(en["name"])
-            c = {key: (cards.get(en["id"], {}).get(key) if cards.get(en["id"], {}).get(key) is not None
-                       else en["card"].get(key)) for key in CARD_KEYS}
+            c = merge_cards(cards.get(en["id"]), en["card"])
             inj, r = injuries.get(k, {}), s_all.get(k)
             status = short_status(inj.get("status")) or short_status(c.get("inj")) or short_status(en["inj"])
+            gp = int(c.get("gp") or (r["GP"] if r else 0) or 0)
             f_s = fantasy(r) if r else None
-            f_14 = fantasy(s14[k]) if k in s14 else None
-            f_7 = fantasy(s7[k]) if k in s7 else None
-            gp = (r["GP"] if r else 0) or 0
             if c["avg"] is None and c["tot"] is not None and gp:
                 c["avg"] = c["tot"] / gp
             avg = c["avg"] if c["avg"] is not None else f_s
-            val = (0.5 * f_s + 0.5 * (f_14 if f_14 is not None else f_s)) if f_s is not None else (c.get("pavg") or 0)
+            f_14 = c["l15"] if c["l15"] is not None else (fantasy(s14[k]) if k in s14 else None)
+            f_7 = c["l7"] if c["l7"] is not None else (fantasy(s7[k]) if k in s7 else None)
+            val = (0.5 * avg + 0.5 * (f_14 if f_14 is not None else avg)) if avg is not None else (c.get("pavg") or 0)
+            pg = c.get("pg") or {}
+            if pg.get("PTS") is not None:
+                st = dict(MIN=pg.get("MIN"), PTS=pg["PTS"], REB=pg.get("REB"), AST=pg.get("AST"), STL=pg.get("STL"),
+                          BLK=pg.get("BLK"), TOV=pg.get("TO"), FG3M=pg.get("3PM"))
+                fgp = pg.get("FG")
+            elif r is not None and r["GP"]:
+                g = r["GP"]
+                st = {m: r[m] / g for m in ("MIN", "PTS", "REB", "AST", "STL", "BLK", "TOV", "FG3M")}
+                fgp = r["FG_PCT"] * 100
+            else:
+                st, fgp = {}, None
             out.append(dict(en, c=c, status=status, ret=inj.get("ret"), gp=gp, avg=avg, fp14=f_14, fp7=f_7, val=val,
-                            st={m: r[m] / gp for m in ("MIN", "PTS", "REB", "AST", "STL", "BLK", "TOV", "FG3M")} if gp else {},
-                            fgp=r["FG_PCT"] * 100 if gp else None,
-                            games=sum(en["team"] in CTX["sched"].get(d, {}) for d in CTX["days"])))
+                            st=st, fgp=fgp, games=sum(en["team"] in CTX["sched"].get(d, {}) for d in CTX["days"])))
         return out
 
     views = [(t["id"], t["name"] + (" (you)" if t is mine else ""), make_players(t["entries"]), False)
