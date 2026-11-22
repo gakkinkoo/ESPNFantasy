@@ -143,12 +143,12 @@ function lab(x){return x.name+(CM==='players'&&x.sub?' ('+x.sub+')':'')}
 function fill(){var L=CM==='teams'?DATA.teams:DATA.players;LAB={};
  var dl=document.getElementById('dl');dl.innerHTML='';
  L.forEach(function(x){var t=lab(x);LAB[t]=x;var o=document.createElement('option');o.value=t;dl.appendChild(o)});
- ['ca','cb','cc'].forEach(function(id,k){document.getElementById(id).value=(k<2&&L[k])?lab(L[k]):''});cmp()}
+ ['ca','cb','cc','cd','ce'].forEach(function(id,k){document.getElementById(id).value=(k<2&&L[k])?lab(L[k]):''});cmp()}
 function pick(v){v=nz(v);if(!v)return null;
  for(var t in LAB){if(nz(t)===v)return LAB[t]}
  for(var t in LAB){if(nz(t).indexOf(v)>=0)return LAB[t]}return null}
 function cmp(){var M=CM==='teams'?DATA.tm:DATA.pm;
- var sel=['ca','cb','cc'].map(function(id){return pick(document.getElementById(id).value)}).filter(Boolean);
+ var sel=['ca','cb','cc','cd','ce'].map(function(id){return pick(document.getElementById(id).value)}).filter(Boolean);
  var h='<table><thead><tr><th>Metric</th>';
  sel.forEach(function(x){h+='<th>'+(x.img?'<img class="ph" src="https://a.espncdn.com/i/headshots/nba/players/full/'+x.img+'.png" onerror="this.remove()"> ':'')+esc(x.name)+'</th>'});
  h+='</tr></thead><tbody>';
@@ -159,6 +159,9 @@ function cmp(){var M=CM==='teams'?DATA.tm:DATA.pm;
   vals.forEach(function(v){var t=(v===null||v===undefined)?'–':Number(v).toFixed(m[3]);
    h+='<td'+(best!==null&&v===best?' class="best"':'')+'>'+t+'</td>'});h+='</tr>'});
  document.getElementById('cmpout').innerHTML=h+'</tbody></table>'}
+var T0=Date.now();
+document.addEventListener('visibilitychange',function(){
+ if(!document.hidden&&Date.now()-T0>600000){location.replace(location.pathname+'?t='+Date.now())}});
 """
 CTX = {}
 
@@ -563,7 +566,9 @@ def compare_html(views):
     return ("<div class='cmpbar'><select onchange='cmode(this.value)'><option value='teams'>Compare teams</option>"
             "<option value='players'>Compare players</option></select><input id='ca' list='dl' placeholder='Search by name...' oninput='cmp()' onfocus='this.select()' autocomplete='off'>"
             "<input id='cb' list='dl' placeholder='Search by name...' oninput='cmp()' onfocus='this.select()' autocomplete='off'>"
-            "<input id='cc' list='dl' placeholder='Add a third (optional)...' oninput='cmp()' onfocus='this.select()' autocomplete='off'>"
+            "<input id='cc' list='dl' placeholder='Add another (optional)...' oninput='cmp()' onfocus='this.select()' autocomplete='off'>"
+            "<input id='cd' list='dl' placeholder='Add another (optional)...' oninput='cmp()' onfocus='this.select()' autocomplete='off'>"
+            "<input id='ce' list='dl' placeholder='Add another (optional)...' oninput='cmp()' onfocus='this.select()' autocomplete='off'>"
             "<datalist id='dl'></datalist></div>"
             "<div class='w' id='cmpout'></div><script>var DATA=" + js + ";</script>")
 
@@ -642,7 +647,8 @@ def main():
         "<header>%s<div><b>%s</b><span class='t'>Fantasy dashboard · League %s</span></div></header>" % (
             logo_html(), mine["name"], LEAGUE_ID),
         "<div class='ctl'><label>View</label><select onchange='show(this.value)'>%s</select>"
-        "<small>Updated %s ET · days follow the NBA schedule (US dates)</small></div>" % (opts, now.strftime("%Y-%m-%d %H:%M")),
+        "<small>Updated %s (Slovak time) · days follow the NBA schedule (US dates)</small></div>" % (
+            opts, dt.datetime.now(ZoneInfo("Europe/Bratislava")).strftime("%d.%m. %H:%M")),
         "<main><h2>Roster</h2><div class='split'><div>%s</div>%s</div>" % ("".join(sec["roster"]), legend),
         "<h2>Recommended Lineup</h2>", *sec["lineup"],
         "<h2>Compare</h2>", cmp_html,
